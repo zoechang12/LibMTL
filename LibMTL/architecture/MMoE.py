@@ -12,13 +12,15 @@ class MMoE(AbsArchitecture):
         self.num_experts = self.kwargs['num_experts'][0]
         self.experts_shared = nn.ModuleList([encoder_class() for _ in range(self.num_experts)])
         
-        # 🔥 用一个dummy输入测试encoder输出维度
+        # 🔥 用dummy输入测试encoder输出维度
         dummy = torch.zeros(1, 3, 224, 224)
+        self.experts_shared[0].eval()  # 避免BatchNorm出错
         with torch.no_grad():
             dummy_out = self.experts_shared[0](dummy)
+        self.experts_shared[0].train()  # 恢复train模式
         self.expert_dim = dummy_out.view(1, -1).size(1)
 
-        # 🔥 gate 的输入维度应该是 expert_dim，而不是图片大小
+        # 🔥 gate 的输入维度应该是 expert_dim
         self.gate_specific = nn.ModuleDict({
             task: nn.Sequential(
                 nn.Linear(self.expert_dim, self.num_experts),
