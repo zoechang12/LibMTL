@@ -27,16 +27,26 @@ class MMoE(AbsArchitecture):
                                                                 nn.Softmax(dim=-1)) for task in self.task_name})
         
     def forward(self, inputs, task_name=None):
-        experts_shared_rep = torch.stack([e(inputs) for e in self.experts_shared])
+    # 每个 expert 提取特征（例如 ResNet 输出 512-d 向量）
+        experts_shared_rep = torch.stack([e(inputs) for e in self.experts_shared])  # [num_experts, B, feat_dim]
+
         out = {}
         for task in self.task_name:
             if task_name is not None and task != task_name:
                 continue
-            selector = self.gate_specific[task](torch.flatten(inputs, start_dim=1)) 
+
+        # gate 的输入是 expert 特征的平均（而不是原图）
+            selector_input = torch.flatten(experts_shared_rep.mean(dim=0), start_dim=1)
+            selector = self.gate_specific[task](selector_input)  # [B, num_experts]
+
+        # 门控融合专家输出
             gate_rep = torch.einsum('ij..., ji -> j...', experts_shared_rep, selector)
+
+        # 准备并送入对应 decoder
             gate_rep = self._prepare_rep(gate_rep, task, same_rep=False)
             out[task] = self.decoders[task](gate_rep)
         return out
+
     
     def get_share_params(self):
         return self.experts_shared.parameters()
