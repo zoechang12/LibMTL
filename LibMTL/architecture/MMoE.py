@@ -23,8 +23,19 @@ class MMoE(AbsArchitecture):
         self.input_size = np.array(self.img_size, dtype=int).prod()
         self.num_experts = self.kwargs['num_experts'][0]
         self.experts_shared = nn.ModuleList([encoder_class() for _ in range(self.num_experts)])
-        self.gate_specific = nn.ModuleDict({task: nn.Sequential(nn.Linear(self.input_size, self.num_experts),
-                                                                nn.Softmax(dim=-1)) for task in self.task_name})
+        # 临时创建一个encoder，推一下输出维度
+        with torch.no_grad():
+            dummy_input = torch.randn(1, *self.img_size).to(device)
+            dummy_output = self.experts_shared[0](dummy_input)
+            out_dim = int(np.prod(dummy_output.shape[1:]))
+
+        self.gate_specific = nn.ModuleDict({
+            task: nn.Sequential(
+                nn.Linear(out_dim, self.num_experts),
+                nn.Softmax(dim=-1)
+            ) for task in self.task_name
+        })
+
         
     def forward(self, inputs, task_name=None):
         experts_shared_rep = torch.stack([e(inputs) for e in self.experts_shared])
@@ -32,7 +43,10 @@ class MMoE(AbsArchitecture):
         for task in self.task_name:
             if task_name is not None and task != task_name:
                 continue
-            selector = self.gate_specific[task](torch.flatten(inputs, start_dim=1)) 
+            experts_shared_rep = torch.stack([e(inputs) for e in self.experts_shared])
+            selector_input = torch.flatten(experts_shared_rep.mean(dim=0), start_dim=1)
+            selector = self.gate_specific[task](selector_input)
+
             gate_rep = torch.einsum('ij..., ji -> j...', experts_shared_rep, selector)
             gate_rep = self._prepare_rep(gate_rep, task, same_rep=False)
             out[task] = self.decoders[task](gate_rep)
